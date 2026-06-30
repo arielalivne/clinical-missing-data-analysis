@@ -1,0 +1,406 @@
+---
+title: "Clinical Missing Data — Deletion Safety Assessment"
+format:
+  html:
+    toc: true
+    toc-depth: 3
+    toc-title: "Contents"
+    theme: flatly
+    code-fold: true
+    code-summary: "Show code"
+    self-contained: true
+execute:
+  warning: false
+  message: false
+---
+
+```{r}
+#| label: setup
+#| include: false
+library(dplyr)
+library(knitr)
+library(kableExtra)
+library(naniar)
+library(pwr)
+```
+
+## Configuration {#config}
+
+> **Set your analysis parameters here before rendering.**
+
+```{r}
+#| label: user-config
+
+
+# =============================================================================
+# STEP 1: Choose your analysis type
+# Options: "t-test" / "logistic" / "correlation"
+# =============================================================================
+analysis_type <- "t-test"
+
+# =============================================================================
+# STEP 2: Set effect size
+# The scale depends on the analysis type chosen above:
+#
+#   "t-test"      → Cohen's d
+#                   small  = 0.2  (subtle difference between groups)
+#                   medium = 0.5  (moderate, visible difference)
+#                   large  = 0.8  (large, obvious difference)
+#
+#   "logistic"    → Odds Ratio (OR)
+#                   small  = 1.5  (weak association)
+#                   medium = 2.5  (moderate association)
+#                   large  = 4.0  (strong association)
+#
+#   "correlation" → Pearson r
+#                   small  = 0.1  (weak linear relationship)
+#                   medium = 0.3  (moderate linear relationship)
+#                   large  = 0.5  (strong linear relationship)
+# =============================================================================
+effect_size <- 0.5
+
+# =============================================================================
+# STEP 3: Set significance level and desired power
+#   alpha → type I error rate  (standard: 0.05)
+#   power → 1 - type II error  (standard: 0.80)
+# =============================================================================
+alpha <- 0.05
+power <- 0.80
+```
+
+---
+
+## Input: Pipeline 1 Results {#input}
+
+This report runs **only on variables flagged as RANDOM** in Pipeline 1.
+Variables flagged as DEPENDENT carry clinical meaning and should not be deleted.
+
+```{r}
+#| label: load-pipeline1-results
+
+# --- These objects are inherited from Pipeline 1 ---
+# If running standalone, load them here:
+results_path <- "/Users/arielalivne/clinical projects/missing data/pipeline1_results.RData"
+load(results_path)
+
+# Filter to RANDOM variables only
+random_vars <- decision_log %>%
+  filter(grepl("RANDOM", Assessment)) %>%
+  pull(Variable)
+
+# Rows affected: any row with NA in at least one RANDOM variable
+rows_to_delete <- df %>%
+  select(all_of(random_vars)) %>%
+  apply(1, function(x) any(is.na(x)))
+
+df_clean <- df[!rows_to_delete, ]
+```
+
+```{r}
+#| label: input-summary-table
+
+decision_log %>%
+  kable(
+    col.names = c("Variable", "Test Used", "Min P-Value",
+                  "Strongest Link", "Link P-Value", "Assessment"),
+    align = c("l", "c", "c", "c", "c", "c"),
+    caption = "Pipeline 1 results — only RANDOM variables proceed to deletion assessment"
+  ) %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"),
+                full_width = FALSE) %>%
+  row_spec(which(grepl("DEPENDENT", decision_log$Assessment)),
+           background = "#f8d7da", bold = TRUE) %>%
+  row_spec(which(grepl("RANDOM", decision_log$Assessment)),
+           background = "#d4edda")
+```
+
+::: {.callout-note}
+Proceeding with **`r length(random_vars)`** RANDOM variable(s): **`r paste(random_vars, collapse = ", ")`**
+:::
+
+---
+
+## Step 1: Little's MCAR Test {#mcar}
+
+A global test of whether the overall missing data pattern is completely random.
+Tests whether the means of observed variables differ across missing data patterns.
+
+- **p > 0.05** → missing data is MCAR — supports safe deletion
+- **p < 0.05** → missing data is not MCAR — deletion may introduce bias
+
+```{r}
+#| label: littles-mcar
+
+mcar_result <- mcar_test(df)
+
+mcar_summary <- data.frame(
+  Statistic = round(mcar_result$statistic, 4),
+  df        = mcar_result$df,
+  P_Value   = round(mcar_result$p.value, 4),
+  Verdict   = ifelse(mcar_result$p.value > alpha,
+                     "MCAR supported ✓ — deletion unlikely to introduce bias",
+                     "MCAR rejected ⚠ — deletion may bias results")
+)
+
+mcar_summary %>%
+  kable(col.names = c("Chi-Square", "df", "P-Value", "Verdict"),
+        align = c("c", "c", "c", "l")) %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"),
+                full_width = FALSE) %>%
+  row_spec(1,
+           background = ifelse(mcar_result$p.value > alpha,
+                               "#d4edda", "#f8d7da"))
+```
+
+---
+
+## Step 2: Data Loss Assessment {#loss}
+
+How many observations are lost if rows with missing RANDOM variables are deleted?
+
+```{r}
+#| label: data-loss
+
+n_total   <- nrow(df)
+n_deleted <- sum(rows_to_delete)
+n_clean   <- nrow(df_clean)
+pct_loss  <- round(n_deleted / n_total * 100, 1)
+
+# Traffic light verdict based on clinical convention
+loss_verdict <- case_when(
+  pct_loss <= 5  ~ "Safe ✓ — loss ≤ 5%",
+  pct_loss <= 15 ~ "Acceptable ⚠ — monitor distribution shift",
+  TRUE           ~ "Risky ✗ — consider imputation instead"
+)
+
+loss_color <- case_when(
+  pct_loss <= 5  ~ "#d4edda",
+  pct_loss <= 15 ~ "#fff3cd",
+  TRUE           ~ "#f8d7da"
+)
+
+data.frame(
+  Total_N   = n_total,
+  Deleted_N = n_deleted,
+  Remaining = n_clean,
+  Pct_Loss  = paste0(pct_loss, "%"),
+  Verdict   = loss_verdict
+) %>%
+  kable(col.names = c("Total N", "Deleted N", "Remaining N", "% Lost", "Verdict"),
+        align = c("c", "c", "c", "c", "l")) %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"),
+                full_width = FALSE) %>%
+  row_spec(1, background = loss_color)
+```
+
+---
+
+## Step 3: Distribution Shift Assessment {#distribution}
+
+For each variable, we compare distributions before and after deletion.
+A significant shift means the remaining sample no longer represents the original population.
+
+- **Continuous variables** → Welch t-test (before vs after)
+- **Categorical variables** → Chi-square test
+
+```{r}
+#| label: distribution-shift
+
+shift_log <- data.frame(
+  Variable   = character(),
+  Type       = character(),
+  P_Value    = numeric(),
+  Assessment = character()
+)
+
+for (var in names(df)) {
+
+  x_before <- df[[var]]
+  x_after  <- df_clean[[var]]
+
+  is_categorical <- is.factor(df[[var]])
+
+  if (is_categorical) {
+    # Chi-square: compare proportions before vs after
+    tbl <- table(
+      Group    = c(rep("Before", nrow(df)),
+                   rep("After",  nrow(df_clean))),
+      Value    = c(as.character(x_before),
+                   as.character(x_after))
+    )
+    test_p <- tryCatch(
+      chisq.test(tbl)$p.value,
+      error = function(e) NA
+    )
+    test_type <- "Chi-square"
+
+  } else {
+    # Welch t-test: compare means before vs after
+    test_p <- tryCatch(
+      t.test(x_before, x_after)$p.value,
+      error = function(e) NA
+    )
+    test_type <- "t-test"
+  }
+
+  assessment <- ifelse(
+    is.na(test_p), "Could not compute",
+    ifelse(test_p > alpha,
+           "No shift ✓",
+           "Shift detected ⚠")
+  )
+
+  shift_log <- rbind(shift_log, data.frame(
+    Variable   = var,
+    Type       = test_type,
+    P_Value    = round(test_p, 4),
+    Assessment = assessment
+  ))
+}
+
+shift_log %>%
+  kable(
+    col.names = c("Variable", "Test", "P-Value", "Distribution Shift"),
+    align = c("l", "c", "c", "l")
+  ) %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"),
+                full_width = FALSE) %>%
+  row_spec(which(grepl("Shift detected", shift_log$Assessment)),
+           background = "#fff3cd", bold = TRUE) %>%
+  row_spec(which(grepl("No shift", shift_log$Assessment)),
+           background = "#d4edda") %>%
+  footnote(
+    general = "p < 0.05 indicates the deletion changed the distribution of that variable.",
+    general_title = "Note: "
+  )
+```
+
+---
+
+## Step 4: Statistical Power Assessment {#power}
+
+```{r}
+#| label: power-calc
+
+# --- Compute minimum N required ---
+n_required <- switch(analysis_type,
+
+  "t-test" = {
+    # Cohen's d: standardized difference between two group means
+    # effect_size scale: small=0.2, medium=0.5, large=0.8
+    ceiling(pwr.t.test(d = effect_size,
+                       sig.level = alpha,
+                       power     = power,
+                       type      = "two.sample")$n * 2)
+  },
+
+  "logistic" = {
+    # Odds Ratio converted to Cohen's h via log-odds approximation
+    # effect_size scale: small=1.5, medium=2.5, large=4.0
+    # Using Cohen's h as proxy: h = 2 * asin(sqrt(p)) difference
+    p1   <- 0.5
+    p2   <- (effect_size * p1) / (1 - p1 + effect_size * p1)
+    h    <- 2 * asin(sqrt(p1)) - 2 * asin(sqrt(p2))
+    ceiling(pwr.2p.test(h         = abs(h),
+                        sig.level = alpha,
+                        power     = power)$n * 2)
+  },
+
+  "correlation" = {
+    # Pearson r
+    # effect_size scale: small=0.1, medium=0.3, large=0.5
+    ceiling(pwr.r.test(r         = effect_size,
+                       sig.level = alpha,
+                       power     = power)$n)
+  }
+)
+
+# --- Compute actual power after deletion ---
+power_after <- switch(analysis_type,
+
+  "t-test" = {
+    pwr.t.test(d         = effect_size,
+               n         = n_clean / 2,
+               sig.level = alpha,
+               type      = "two.sample")$power
+  },
+
+  "logistic" = {
+    p1 <- 0.5
+    p2 <- (effect_size * p1) / (1 - p1 + effect_size * p1)
+    h  <- 2 * asin(sqrt(p1)) - 2 * asin(sqrt(p2))
+    pwr.2p.test(h         = abs(h),
+                n         = n_clean / 2,
+                sig.level = alpha)$power
+  },
+
+  "correlation" = {
+    pwr.r.test(r         = effect_size,
+               n         = n_clean,
+               sig.level = alpha)$power
+  }
+)
+
+power_after_pct <- round(power_after * 100, 1)
+
+power_verdict <- ifelse(
+  n_clean >= n_required,
+  paste0("Sufficient power ✓ — ", power_after_pct, "% (target: ",
+         round(power * 100), "%)"),
+  paste0("Insufficient power ✗ — ", power_after_pct, "% (target: ",
+         round(power * 100), "%)")
+)
+
+power_color <- ifelse(n_clean >= n_required, "#d4edda", "#f8d7da")
+
+data.frame(
+  Analysis      = analysis_type,
+  Effect_Size   = effect_size,
+  N_Required    = n_required,
+  N_After       = n_clean,
+  Power_After   = paste0(power_after_pct, "%"),
+  Verdict       = power_verdict
+) %>%
+  kable(
+    col.names = c("Analysis", "Effect Size", "Min N Required",
+                  "N After Deletion", "Actual Power", "Verdict"),
+    align = c("l", "c", "c", "c", "c", "l")
+  ) %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"),
+                full_width = FALSE) %>%
+  row_spec(1, background = power_color)
+```
+
+---
+
+## Step 5: Final Recommendation {#recommendation}
+
+```{r}
+#| label: final-recommendation
+#| results: asis
+
+mcar_ok    <- mcar_result$p.value > alpha
+loss_ok    <- pct_loss <= 15
+power_ok   <- n_clean >= n_required
+no_shift   <- all(grepl("No shift", shift_log$Assessment), na.rm = TRUE)
+
+all_ok <- mcar_ok && loss_ok && power_ok && no_shift
+
+if (all_ok) {
+  cat("::: {.callout-tip}\n")
+  cat("### ✓ Deletion is safe\n")
+  cat("All four criteria passed: MCAR supported, data loss acceptable,")
+  cat(" statistical power maintained, no distribution shift detected.\n")
+  cat(":::\n")
+} else {
+  cat("::: {.callout-warning}\n")
+  cat("### ⚠ Deletion is not recommended\n")
+  cat("The following criteria were not met:\n\n")
+  if (!mcar_ok)   cat("- **MCAR rejected** — missing data pattern is non-random\n")
+  if (!loss_ok)   cat("- **Data loss > 15%** — too many observations would be removed\n")
+  if (!power_ok)  cat("- **Insufficient power** — remaining N is below minimum required\n")
+  if (!no_shift)  cat("- **Distribution shift** — deletion changes sample composition\n")
+  cat("\n**Consider multiple imputation (MICE) instead of deletion.**\n")
+  cat(":::\n")
+}
+```

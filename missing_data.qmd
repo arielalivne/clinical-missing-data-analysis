@@ -1,0 +1,48 @@
+---
+title: "draft1 cleaning missing data"
+format: html
+editor: visual
+---
+
+## Quarto
+
+```{r} 
+#| label: load-data 
+#| warning: false
+
+library(tidyverse)
+
+# file pathway
+
+cleveland_path <- '/Users/arielalivne/clinical projects/missing data/heart+disease/processed.cleveland.data'
+
+# define columns names
+
+col_names <- c("age", "sex", "cp", "trestbps", "chol", "fbs", "restecg", "thalach", "exang", "oldpeak", "slope", "ca", "thal", "num")
+
+# readinf data
+
+df <- read.csv(cleveland_path, header = FALSE, col.names = col_names)
+
+# turning ? into missing (NA)
+
+df[df == "?"] <- NA
+
+# המרת כל העמודות למספרים
+
+df <- df %>% mutate(across(everything(), as.numeric))
+
+# הצגת בדיקת החוסרים
+
+colSums(is.na(df))
+
+```
+''' {r}
+#| lable: handle-missing-values
+
+#option1: removing rows with missing data
+df_clean <- df %>% drop_na()
+
+'''{r}
+library (pwr)
+'''
