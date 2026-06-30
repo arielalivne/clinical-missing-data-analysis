@@ -47,3 +47,17 @@ po/*~
 
 # RStudio Connect folder
 rsconnect/
+
+# Mac system files
+.DS_Store
+
+# R output files
+*.html
+*.RData
+
+# Data folder
+heart+disease/
+heart+disease.zip
+
+# Old drafts
+missing_data.qmd
