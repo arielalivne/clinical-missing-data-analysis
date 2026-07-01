@@ -28,21 +28,20 @@ library(kableExtra)
 
 ## Overview
 
-This report documents the missing data analysis pipeline for clinical trial data.
-The pipeline follows three stages:
+This report documents the missing data analysis pipeline for clinical trial data. The pipeline follows three stages:
 
-1. **Detection** — mapping all missing values across variables
-2. **Dependency analysis** — testing whether missingness is statistically linked to other variables
-3. **Clinical interpretation** — flagging variables that require manual review before any imputation or deletion
+1.  **Detection** — mapping all missing values across variables
+2.  **Dependency analysis** — testing whether missingness is statistically linked to other variables
+3.  **Clinical interpretation** — flagging variables that require manual review before any imputation or deletion
 
----
+------------------------------------------------------------------------
 
 ## Step 1: Missing Data Summary {#step1}
 
 ```{r}
 #| label: data-loading
 
-data_path <- '/Users/arielalivne/clinical projects/missing data/heart+disease/processed.cleveland.data'
+data_path <- ('path/to/cleveland.data')
 
 col_names <- c("age", "sex", "cp", "trestbps", "chol", "fbs",
                "restecg", "thalach", "exang", "oldpeak", "slope",
@@ -53,7 +52,7 @@ df <- read.csv(data_path,
                col.names  = col_names,
                na.strings = c("?", "", "NA"))
 
-# הגדרת פקטורים מראש
+# Define factor variables in advance
 factor_cols <- c("sex", "cp", "fbs", "restecg", "exang", "slope", "thal", "num")
 
 df <- df %>%
@@ -90,16 +89,15 @@ na_summary %>%
 na_cols <- na_summary %>% filter(Missing_N > 0) %>% pull(Variable)
 ```
 
-::: {.callout-note}
+::: callout-note
 `r length(na_cols)` variable(s) with missing data detected: **`r paste(na_cols, collapse = ", ")`**
 :::
 
----
+------------------------------------------------------------------------
 
 ## Step 2: Missing Data Patterns {#step2}
 
-The UpSet plot shows which combinations of variables are missing together.
-Co-missing variables may indicate a non-random mechanism.
+The UpSet plot shows which combinations of variables are missing together. Co-missing variables may indicate a non-random mechanism.
 
 ```{r}
 #| label: upset-plot
@@ -109,17 +107,16 @@ Co-missing variables may indicate a non-random mechanism.
 gg_miss_upset(df)
 ```
 
----
+------------------------------------------------------------------------
 
 ## Step 3: Dependency Analysis {#step3}
 
 For each variable with missing data, missingness is tested against all other variables:
 
-- **Categorical variables** → Fisher's Exact Test
-- **Continuous variables** → Point-Biserial Correlation
+-   **Categorical variables** → Fisher's Exact Test
+-   **Continuous variables** → Point-Biserial Correlation
 
-The minimum p-value across all tests is reported. A significant result suggests
-the missingness is **not random** and may carry clinical meaning.
+The minimum p-value across all tests is reported. A significant result suggests the missingness is **not random** and may carry clinical meaning.
 
 ```{r}
 #| label: dependency-analysis
@@ -181,7 +178,7 @@ for (col in na_cols) {
   linked_var <- other_cols[min_idx]
   assessment <- ifelse(min_p < 0.05, "DEPENDENT ⚠", "RANDOM ✓")
 
-  # הצגת p-value של הקשר החזק ביותר + אינדיקציה אם עבר סף
+  # Display p-value of strongest association and significance indicator
   linked_p_label <- ifelse(
     min_p < 0.05,
     paste0(round(min_p, 4), " ✓"),   # above a threshold -> significant
@@ -217,12 +214,12 @@ decision_log %>%
     background = "#d4edda"
   ) %>%
   footnote(
-    general = "Strongest Link = המשתנה עם ה-p-value הנמוך ביותר מכל הבדיקות. Link P-Value: (ns) = not significant (p ≥ 0.05).",
+    general = "Strongest Link = the variable with the lowest p-value across all tests. Link P-Value: (ns) = not significant (p ≥ 0.05).",
     general_title = "Note: "
   )
 ```
 
----
+------------------------------------------------------------------------
 
 ## Step 4: Final Summary {#step4}
 
@@ -234,12 +231,12 @@ n_random    <- sum(grepl("RANDOM",    decision_log$Assessment))
 dep_vars    <- decision_log %>% filter(grepl("DEPENDENT", Assessment)) %>% pull(Variable)
 ```
 
-| | |
-|---|---|
-| Variables analyzed | `r length(na_cols)` |
-| DEPENDENT (MNAR risk) | `r n_dependent` |
-| RANDOM (MCAR/MAR) | `r n_random` |
-| Alpha threshold | 0.05 |
+|                       |                     |
+|-----------------------|---------------------|
+| Variables analyzed    | `r length(na_cols)` |
+| DEPENDENT (MNAR risk) | `r n_dependent`     |
+| RANDOM (MCAR/MAR)     | `r n_random`        |
+| Alpha threshold       | 0.05                |
 
 ```{r}
 #| label: callout-dependent
@@ -266,6 +263,6 @@ save(df, decision_log, file = "pipeline1_results.RData")
 #| label: save-for-pipeline2
 #| include: false
 
-results_path <- "/Users/arielalivne/clinical projects/missing data/pipeline1_results.RData"
+results_path <- ("/path/to/pipeline1_results.RData")
 save(df, decision_log, file = results_path)
 ```

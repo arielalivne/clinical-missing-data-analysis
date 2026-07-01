@@ -80,7 +80,7 @@ Variables flagged as DEPENDENT carry clinical meaning and should not be deleted.
 
 # --- These objects are inherited from Pipeline 1 ---
 # If running standalone, load them here:
-results_path <- "/Users/arielalivne/clinical projects/missing data/pipeline1_results.RData"
+results_path <- ("path/to/pipeline1_results.RData")
 load(results_path)
 
 # Filter to RANDOM variables only
